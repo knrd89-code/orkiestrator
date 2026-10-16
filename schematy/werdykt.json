@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "werdykt",
+    "podsumowanie",
+    "uwagi"
+  ],
+  "properties": {
+    "werdykt": {
+      "type": "string",
+      "enum": [
+        "OK",
+        "POPRAWKI"
+      ],
+      "description": "OK, gdy nie ma żadnej uwagi krytycznej. POPRAWKI tylko wtedy, gdy jest co najmniej jedna uwaga krytyczna."
+    },
+    "podsumowanie": {
+      "type": "string",
+      "description": "Najwyżej 3 zdania po polsku: co sprawdziłeś i jaki jest stan."
+    },
+    "uwagi": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "waga",
+          "plik",
+          "miejsce",
+          "problem",
+          "dowod",
+          "kryterium",
+          "propozycja"
+        ],
+        "properties": {
+          "waga": {
+            "type": "string",
+            "enum": [
+              "krytyczna",
+              "drobna"
+            ]
+          },
+          "plik": {
+            "type": "string",
+            "description": "Ścieżka pliku, którego dotyczy uwaga. Pusty tekst tylko przy recenzji planu."
+          },
+          "miejsce": {
+            "type": "string",
+            "description": "Funkcja, linia albo sekcja planu (np. 'KROKI 3', 'K2')."
+          },
+          "problem": {
+            "type": "string",
+            "description": "Jedno zdanie: co jest źle."
+          },
+          "dowod": {
+            "type": "string",
+            "description": "Konkretny scenariusz: gdy X, to Y, bo Z. Bez tego uwaga zostanie automatycznie odrzucona."
+          },
+          "kryterium": {
+            "type": "string",
+            "description": "Które kryterium odbioru (K1, K2...) albo która zasada (bezpieczeństwo, utrata danych, zepsute działanie, oszukany test) jest naruszona. Pusty tekst przy uwagach drobnych."
+          },
+          "propozycja": {
+            "type": "string",
+            "description": "Jedno zdanie: co zmienić."
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["podsumowanie", "ranking", "brakujace_pomysly", "ostrzezenia"],
+  "properties": {
+    "podsumowanie": {
+      "type": "string",
+      "description": "Najwyżej 3 zdania po polsku: co według Ciebie najbardziej przybliży Konrada do jego celu."
+    },
+    "ranking": {
+      "type": "array",
+      "description": "Wszystkie pomysły z listy, od najlepszego do najgorszego.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "ocena", "uzasadnienie"],
+        "properties": {
+          "id": { "type": "string", "description": "Identyfikator pomysłu z listy, np. F3." },
+          "ocena": { "type": "integer", "description": "Ocena od 1 do 10." },
+          "uzasadnienie": { "type": "string", "description": "Jedno zdanie, z odniesieniem do celu Konrada albo do kodu." }
+        }
+      }
+    },
+    "brakujace_pomysly": {
+      "type": "array",
+      "description": "Najwyżej 3 pomysły, których brakuje na liście, a które byłyby lepsze od jej środka. Pusta lista, jeśli nic takiego nie ma.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["nazwa", "uzasadnienie"],
+        "properties": {
+          "nazwa": { "type": "string" },
+          "uzasadnienie": { "type": "string" }
+        }
+      }
+    },
+    "ostrzezenia": {
+      "type": "array",
+      "description": "Konkretne ryzyka przy pomysłach z czołówki (prawo, dane osobowe, koszt, zależności). Pusta lista, jeśli brak.",
+      "items": { "type": "string" }
+    }
+  }
+}
