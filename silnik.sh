@@ -43,6 +43,8 @@ esac
 [ -f "$KIT/ustawienia.conf" ] || blad "Brak $KIT/ustawienia.conf. Silnik jest niekompletny." 30
 # shellcheck disable=SC1090
 . "$KIT/ustawienia.conf"
+# Domyślne poziomy rozumowania, gdy plik ustawień ich nie zawiera (pusty wpis w pliku = domyślny Codexa).
+: "${WYSILEK_RANKINGU=low}" "${WYSILEK_PLANU=medium}" "${WYSILEK_KODU=high}"
 
 wejdz_do_repo() {
   ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || blad "To nie jest repozytorium git. Otwórz projekt (folder z repozytorium) i spróbuj ponownie." 40
@@ -149,10 +151,14 @@ polacz() { if [ -n "$1" ] && [ -n "$2" ]; then printf '%s,%s' "$1" "$2"; else pr
 blad_przejsciowy() {
   # blad_przejsciowy log -> 0 gdy dziennik Codexa wygląda na chwilową awarię (sieć, przeciążenie),
   # a nie na trwały problem (limit konta, logowanie). Trwałe mają pierwszeństwo.
+  # Dziennik zawiera też cały prompt i przeczytane pliki, więc oceniamy WYŁĄCZNIE linie z komunikatem
+  # błędu Codexa ("ERROR: ...", "Error: ...", opcjonalnie po znaczniku czasu). Brak takich linii = bez ponowienia.
+  local bledy k='(^|[^0-9a-fA-F-])' p='([^0-9a-fA-F-]|$)'
+  bledy="$(grep -Ei '^(\[[^]]*\][[:space:]]*)?error:' "$1")"
+  [ -n "$bledy" ] || return 1
   # Kody HTTP tylko jako osobne liczby, żeby nie łapać fragmentów identyfikatorów sesji (UUID).
-  local k='(^|[^0-9a-fA-F-])' p='([^0-9a-fA-F-]|$)'
-  grep -Eqi "usage limit|quota|${k}401${p}|unauthori[sz]ed|not logged in|login" "$1" && return 1
-  grep -Eqi "${k}(429|500|502|503|504)${p}|rate.?limit|too many requests|overloaded|stream (disconnected|error)|connection (reset|refused|closed)|econnreset|etimedout|temporarily unavailable" "$1"
+  printf '%s\n' "$bledy" | grep -Eqi "usage limit|quota|out of credits|${k}401${p}|unauthori[sz]ed|not logged in|login" && return 1
+  printf '%s\n' "$bledy" | grep -Eqi "${k}(429|500|502|503|504)${p}|rate.?limit|too many requests|overloaded|high load|at capacity|stream (disconnected|error)|exceeded retry limit|connection (reset|refused|closed)|econnreset|etimedout|temporarily unavailable"
 }
 
 uruchom_codex() {
@@ -162,6 +168,12 @@ uruchom_codex() {
   set -- exec -s read-only -C "$ROOT" --color never --ephemeral --output-schema "$schemat" -o "$wynik"
   [ -n "${MODEL:-}" ] && set -- "$@" -m "$MODEL"
   [ -n "$img" ] && set -- "$@" -i "$img"
+  # WYSILEK: poziom rozumowania recenzenta (ustawia polecenie; puste = domyślny Codexa, czyli zwykle "none").
+  case "${WYSILEK:-}" in
+    "") ;;
+    none|minimal|low|medium|high|xhigh) set -- "$@" -c "model_reasoning_effort=\"$WYSILEK\"" ;;
+    *) blad "Nieznany poziom rozumowania recenzenta: '$WYSILEK' (ustawienia.conf). Dozwolone: none, minimal, low, medium, high, xhigh albo puste." 40 ;;
+  esac
   # shellcheck disable=SC2086
   [ -n "${CODEX_DODATKOWE:-}" ] && set -- "$@" $CODEX_DODATKOWE
   for proba in 1 2; do
@@ -229,11 +241,24 @@ zapisz_prace() {
 
 # ---------------------------------------------------------------- chmura i GitHub
 
+wyslij_galaz() {
+  # Wysyła gałąź zadania i pilnuje, żeby lokalna gałąź była powiązana z tą na serwerze.
+  # W chmurze (push przez pośrednika) samo -u potrafiło tego nie zapisać, a hook sesji
+  # zgłaszał wtedy "niewysłane zmiany". Komunikaty gita idą do github.log, nie w nicość.
+  { echo "--- $(teraz) git push $GALAZ"; } >> "$PRACA/github.log"
+  git push -q -u origin "$GALAZ" >> "$PRACA/github.log" 2>&1 || return 1
+  git config "branch.$GALAZ.remote" origin
+  git config "branch.$GALAZ.merge" "refs/heads/$GALAZ"
+  git rev-parse -q --verify "refs/remotes/origin/$GALAZ" >/dev/null \
+    || git fetch -q origin "$GALAZ" >> "$PRACA/github.log" 2>&1
+  return 0
+}
+
 wypchnij() {
   # W chmurze praca istnieje tylko w maszynie wirtualnej, dopóki nie trafi na GitHuba.
   # Wysyłamy WYŁĄCZNIE gałąź zadania (nigdy główną), co najwyżej uruchamia podgląd na Vercelu.
   [ "$CHMURA" = 1 ] || return 0
-  if git push -q -u origin "$GALAZ" >/dev/null 2>&1; then
+  if wyslij_galaz; then
     return 0
   fi
   echo "UWAGA: nie udało się wysłać gałęzi $GALAZ na GitHuba. Praca jest tylko w tej sesji."
@@ -429,7 +454,7 @@ cmd_plan() {
   } > "$pakiet"
 
   echo "Recenzja planu, runda $runda/$MAX_RUND_PLANU..."
-  uruchom_codex "$pakiet" "$PRACA/werdykt-plan-$runda.json" "$PRACA/codex-plan-$runda.log" "$img"
+  WYSILEK="$WYSILEK_PLANU" uruchom_codex "$pakiet" "$PRACA/werdykt-plan-$runda.json" "$PRACA/codex-plan-$runda.log" "$img"
   ocen plan "$runda" "$MAX_RUND_PLANU"
 }
 
@@ -453,7 +478,7 @@ cmd_ranking() {
     echo ""; echo "# POMYSŁY DO OCENY"; cat "$slepa"
   } > "$pakiet"
   echo "GPT układa własny ranking pomysłów..."
-  uruchom_codex "$pakiet" "$PRACA/ranking-gpt.json" "$PRACA/codex-ranking.log" "" "$KIT/schematy/ranking.json"
+  WYSILEK="$WYSILEK_RANKINGU" uruchom_codex "$pakiet" "$PRACA/ranking-gpt.json" "$PRACA/codex-ranking.log" "" "$KIT/schematy/ranking.json"
   python3 "$KIT/narzedzia/ranking.py" "$pom" "$PRACA/ranking-gpt.json" "$PRACA/RANKING.md" "$DZIENNIK"
   exit $?
 }
@@ -551,7 +576,7 @@ cmd_kod() {
   } > "$pakiet"
 
   echo "Recenzja kodu, runda $runda/$MAX_RUND_KODU. GPT czyta zmiany i ogląda zrzuty..."
-  uruchom_codex "$pakiet" "$PRACA/werdykt-kod-$runda.json" "$PRACA/codex-kod-$runda.log" "$img"
+  WYSILEK="$WYSILEK_KODU" uruchom_codex "$pakiet" "$PRACA/werdykt-kod-$runda.json" "$PRACA/codex-kod-$runda.log" "$img"
   ocen kod "$runda" "$MAX_RUND_KODU"
 }
 
@@ -592,7 +617,7 @@ raport_chmura() {
     git commit -q -m "orkiestrator: sprzątanie zrzutów" >/dev/null 2>&1
     rm -rf .orkiestrator-raport
   fi
-  git push -q -u origin "$GALAZ" >/dev/null 2>&1 || blad "Nie udało się wysłać gałęzi $GALAZ na GitHuba." 30
+  wyslij_galaz || blad "Nie udało się wysłać gałęzi $GALAZ na GitHuba. Szczegóły: $ROOT/$PRACA/github.log" 30
 
   local obrazki=""
   [ -n "$sha" ] && obrazki="https://github.com/$slug/blob/$sha/.orkiestrator-raport"
@@ -637,7 +662,7 @@ cmd_przyjmij() {
     slug="$(repo_slug)"
     n="$(pr_numer)"
     [ -n "$n" ] || blad "Nie ma PR dla tego zadania. Najpierw: bash $SILNIK raport" 40
-    git push -q origin "$GALAZ" >/dev/null 2>&1 || blad "Nie udało się wysłać ostatnich zmian na GitHuba." 30
+    wyslij_galaz || blad "Nie udało się wysłać ostatnich zmian na GitHuba. Szczegóły: $ROOT/$PRACA/github.log" 30
     baza="$(cat "$PRACA/BAZA_PR" 2>/dev/null || galaz_bazowa)"
     wynik="$(gh_api -X PUT "repos/$slug/pulls/$n/merge" -f merge_method=squash -f commit_title="orkiestrator: $opis" --jq .merged)"
     if [ "$wynik" != "true" ]; then

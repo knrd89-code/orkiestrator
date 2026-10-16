@@ -46,8 +46,9 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-cat > /dev/null
 echo "session id: 0199a429-5004-7401-a503-000000000502"
+# Jak prawdziwy Codex: cały prompt trafia do dziennika (słowa z niego nie mogą udawać błędów).
+echo "user"; cat
 # Jak prawdziwy Codex: poza repozytorium git bez flagi odmawia pracy.
 if [ "$skip" = 0 ] && ! git -C "$katalog" rev-parse --git-dir >/dev/null 2>&1; then
   echo "Not inside a trusted directory and --skip-git-repo-check was not specified."; exit 1
@@ -168,6 +169,14 @@ sprawdz "wpis o ponowieniu w dzienniku" 'grep -q "chwilowy błąd Codexa (kod 1)
 sprawdz "dziennik pierwszej próby zachowany" '[ -f .orkiestrator/codex-plan-1.log.proba1 ]'
 sprawdz "runda nie zużyta" '[ -f .orkiestrator/werdykt-plan-1.json ] && [ ! -f .orkiestrator/werdykt-plan-2.json ]'
 
+scenariusz "Ponowienie mimo słów „login”, „usage limit” i „401” w treści recenzji"
+nowe_repo ponow-tresc
+bash "$SILNIK" start "ponowienie z treścią" > /dev/null 2>&1; wypelnij_zadanie brak
+printf '# INTENCJA\nNaprawić login. Komunikat: usage limit, kod 401, quota.\nERROR w opisie zadania, usage limit, nie jest błędem.\n' > .orkiestrator/INTENCJA.md
+w_kolejce "BLAD stream disconnected before completion: error sending request"; w_kolejce "$OK"; przed=$(wywolania)
+oczekuj 0 "plan po ponowieniu" plan
+sprawdz "dokładnie 2 wywołania GPT" '[ "$(wywolania)" = $((przed + 2)) ]'
+
 scenariusz "Bez ponowienia: błąd trwały, dwa błędy z rzędu, przekroczony czas (K4)"
 nowe_repo trwale
 bash "$SILNIK" start "trwałe błędy" > /dev/null 2>&1; wypelnij_zadanie brak
@@ -182,6 +191,60 @@ oczekuj 30 "przekroczony czas recenzji" plan
 sprawdz "dokładnie 1 wywołanie" '[ "$(wywolania)" = $((przed + 1)) ]'
 sprawdz "żaden werdykt nie powstał" '! ls .orkiestrator/werdykt-plan-*.json >/dev/null 2>&1'
 ustaw
+
+ostatnie() { tail -n 1 "$ATRAPA/wywolania"; }
+RANKING_GPT='{"podsumowanie":"atrapa","ranking":[{"id":"F1","ocena":8,"uzasadnienie":"a"},{"id":"F2","ocena":5,"uzasadnienie":"b"}],"brakujace_pomysly":[],"ostrzezenia":[]}'
+
+scenariusz "Poziom rozumowania recenzenta"
+nowe_repo wysilek
+bash "$SILNIK" start "wysiłek" > /dev/null 2>&1; wypelnij_zadanie brak
+printf '# POMYSŁY\n\n## F1: Jeden\nOpis: a.\nSkąd: kod aplikacji.\nWartość: 5 | Dopasowanie: 5 | Koszt: 5 | Ryzyko: 5\n\n## F2: Dwa\nOpis: b.\nSkąd: kod aplikacji.\nWartość: 2 | Dopasowanie: 2 | Koszt: 2 | Ryzyko: 2\n' > .orkiestrator/POMYSLY.md
+w_kolejce "$RANKING_GPT"
+oczekuj 0 "ranking" ranking
+sprawdz "ranking: low" 'ostatnie | grep -qF "model_reasoning_effort=\"low\""'
+w_kolejce "$OK"
+oczekuj 0 "plan" plan
+sprawdz "plan: medium" 'ostatnie | grep -qF "model_reasoning_effort=\"medium\""'
+echo "nowa treść" > a.txt; w_kolejce "$OK"
+oczekuj 0 "kod" kod
+sprawdz "kod: high" 'ostatnie | grep -qF "model_reasoning_effort=\"high\""'
+
+nowe_repo wysilek-ustawienia
+bash "$SILNIK" start "ustawienia wysiłku" > /dev/null 2>&1; wypelnij_zadanie brak
+ustaw WYSILEK_PLANU '""'; w_kolejce "$OK"
+oczekuj 0 "plan z pustym ustawieniem" plan
+sprawdz "puste = bez flagi (domyślny Codexa)" '! ostatnie | grep -q "model_reasoning_effort"'
+rm -f .orkiestrator/PLAN_ZIELONY .orkiestrator/werdykt-plan-*.json
+ustaw WYSILEK_PLANU turbo; przed=$(wywolania)
+oczekuj 40 "nieznany poziom" plan
+sprawdz "bez wywołania GPT" '[ "$(wywolania)" = "$przed" ]'
+ustaw; perl -ni -e 'print unless /^WYSILEK_/' "$T/kit/ustawienia.conf"; w_kolejce "$OK"
+oczekuj 0 "stary plik ustawień bez nowych kluczy" plan
+sprawdz "domyślnie medium dla planu" 'ostatnie | grep -qF "model_reasoning_effort=\"medium\""'
+ustaw
+
+scenariusz "Powiązanie gałęzi z serwerem w chmurze"
+# Atrapa gita, która przy push gubi -u: tak zachowywał się push w chmurze (powiązanie nie zapisane).
+mkdir -p "$T/bin-git"; PRAWDZIWY_GIT="$(command -v git)"
+cat > "$T/bin-git/git" <<EOF
+#!/bin/bash
+if [ "\${1:-}" = push ]; then a=(); for x in "\$@"; do [ "\$x" = -u ] || a+=("\$x"); done; exec "$PRAWDZIWY_GIT" "\${a[@]}"; fi
+exec "$PRAWDZIWY_GIT" "\$@"
+EOF
+chmod +x "$T/bin-git/git"
+nowe_repo chmura
+git init -q --bare "$T/origin-chmura.git" && git remote add origin "$T/origin-chmura.git" && git push -q origin main
+bash "$SILNIK" start "chmura" > /dev/null 2>&1; wypelnij_zadanie brak; w_kolejce "$OK"
+bash "$SILNIK" plan > /dev/null 2>&1
+echo "nowa treść" > a.txt; w_kolejce "$OK"
+STARY_PATH="$PATH"; export ORK_TRYB=chmura PATH="$T/bin-git:$PATH"
+oczekuj 0 "kod (wysyła gałąź)" kod
+export ORK_TRYB=lokalnie PATH="$STARY_PATH"
+G="$(git rev-parse --abbrev-ref HEAD)"
+sprawdz "gałąź jest na serwerze z ostatnim commitem" '[ "$(git --git-dir="$T/origin-chmura.git" rev-parse "refs/heads/$G")" = "$(git rev-parse HEAD)" ]'
+sprawdz "gałąź powiązana z origin/$G" '[ "$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null)" = "origin/$G" ]'
+sprawdz "git status nie widzi niewysłanych commitów" 'git status -sb | head -1 | grep -qF "...origin/$G" && ! git status -sb | head -1 | grep -q ahead'
+sprawdz "komunikaty push w github.log" 'grep -q "git push $G" .orkiestrator/github.log'
 
 scenariusz "Polecenie test poza repozytorium (K1)"
 cd "$T" || exit 1
