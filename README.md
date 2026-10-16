@@ -58,6 +58,6 @@ W chmurze „zostaw” scala PR. Projekt połączony z Vercelem trafia wtedy na 
 - `silnik.sh`: wszystkie kroki (`przygotuj`, `zaloguj`, `start`, `ranking`, `oczy`, `plan`, `kod`, `raport`, `przyjmij`, `cofnij`).
 - `prompty/`: instrukcje dla recenzenta GPT.
 - `wiedza/`: jak prowadzić rozmowę, szukać pomysłów i robić profesjonalny UI.
-- `ustawienia.conf`: limity rund i czasy.
+- `ustawienia.conf`: limity rund, czasy i poziom rozumowania recenzenta GPT (osobno dla rankingu, planu i kodu).
 - `skill/zrob/SKILL.md`: kopia skilla.
 - `testy/test-silnika.sh`: testy bramek i ponowień z atrapą GPT (offline, kilka sekund): `bash testy/test-silnika.sh`.
