@@ -60,3 +60,4 @@ W chmurze „zostaw” scala PR. Projekt połączony z Vercelem trafia wtedy na 
 - `wiedza/`: jak prowadzić rozmowę, szukać pomysłów i robić profesjonalny UI.
 - `ustawienia.conf`: limity rund i czasy.
 - `skill/zrob/SKILL.md`: kopia skilla.
+- `testy/test-silnika.sh`: testy bramek i ponowień z atrapą GPT (offline, kilka sekund): `bash testy/test-silnika.sh`.
