@@ -146,15 +146,37 @@ obrazy_stron() {
 
 polacz() { if [ -n "$1" ] && [ -n "$2" ]; then printf '%s,%s' "$1" "$2"; else printf '%s%s' "$1" "$2"; fi; }
 
+blad_przejsciowy() {
+  # blad_przejsciowy log -> 0 gdy dziennik Codexa wygląda na chwilową awarię (sieć, przeciążenie),
+  # a nie na trwały problem (limit konta, logowanie). Trwałe mają pierwszeństwo.
+  # Kody HTTP tylko jako osobne liczby, żeby nie łapać fragmentów identyfikatorów sesji (UUID).
+  local k='(^|[^0-9a-fA-F-])' p='([^0-9a-fA-F-]|$)'
+  grep -Eqi "usage limit|quota|${k}401${p}|unauthori[sz]ed|not logged in|login" "$1" && return 1
+  grep -Eqi "${k}(429|500|502|503|504)${p}|rate.?limit|too many requests|overloaded|stream (disconnected|error)|connection (reset|refused|closed)|econnreset|etimedout|temporarily unavailable" "$1"
+}
+
 uruchom_codex() {
   # uruchom_codex pakiet wynik log [obrazy_przecinkami] [schemat]
-  local pakiet="$1" wynik="$2" log="$3" img="${4:-}" schemat="${5:-$SCHEMAT}" rc
-  rm -f "$wynik"
+  # CODEX_DODATKOWE: dodatkowe argumenty codex exec (ustawia tylko polecenie test).
+  local pakiet="$1" wynik="$2" log="$3" img="${4:-}" schemat="${5:-$SCHEMAT}" rc proba
   set -- exec -s read-only -C "$ROOT" --color never --ephemeral --output-schema "$schemat" -o "$wynik"
   [ -n "${MODEL:-}" ] && set -- "$@" -m "$MODEL"
   [ -n "$img" ] && set -- "$@" -i "$img"
-  z_limitem "$LIMIT_RECENZJI_S" codex "$@" - < "$pakiet" > "$log" 2>&1
-  rc=$?
+  # shellcheck disable=SC2086
+  [ -n "${CODEX_DODATKOWE:-}" ] && set -- "$@" $CODEX_DODATKOWE
+  for proba in 1 2; do
+    rm -f "$wynik"
+    z_limitem "$LIMIT_RECENZJI_S" codex "$@" - < "$pakiet" > "$log" 2>&1
+    rc=$?
+    [ "$rc" -eq 0 ] && [ -s "$wynik" ] && break
+    # Jedno ponowienie, tylko przy chwilowej awarii. Przekroczony czas (142) nie jest ponawiany.
+    [ "$proba" -eq 1 ] && [ "$rc" -ne 142 ] && blad_przejsciowy "$log" || break
+    mv "$log" "$log.proba1"
+    echo "Chwilowy błąd połączenia z GPT (kod $rc). Ponawiam za ${ORK_PONOW_S:-15} s..."
+    loguj ""
+    loguj "- $(teraz): chwilowy błąd Codexa (kod $rc), ponowienie. Pierwsza próba: $log.proba1"
+    sleep "${ORK_PONOW_S:-15}"
+  done
   if [ "$rc" -ne 0 ] || [ ! -s "$wynik" ]; then
     rm -f "$wynik"
     echo "BŁĄD TECHNICZNY: Codex nie zwrócił werdyktu (kod $rc). Ostatnie linie dziennika Codexa:"
@@ -825,7 +847,8 @@ cmd_test() {
   local tmp="$HOME/.orkiestrator/test-polaczenia"; mkdir -p "$HOME/.orkiestrator"
   PRACA="$HOME/.orkiestrator"; DZIENNIK="$PRACA/test-dziennik.md"; ROOT="$HOME/.orkiestrator"
   printf '%s\n' "Test połączenia. Niczego nie czytaj i nie uruchamiaj. Zwróć werdykt OK, pustą listę uwag i podsumowanie: test udany." > "$tmp.md"
-  ( cd "$ROOT" && uruchom_codex "$tmp.md" "$tmp.json" "$tmp.log" ) || exit 30
+  # ~/.orkiestrator nie jest repozytorium git, a Codex bez tej flagi odmawia pracy poza nim.
+  ( cd "$ROOT" && CODEX_DODATKOWE="--skip-git-repo-check" uruchom_codex "$tmp.md" "$tmp.json" "$tmp.log" ) || exit 30
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["werdykt"] in ("OK","POPRAWKI"); print("OK. GPT odpowiada:", d.get("podsumowanie",""))' "$tmp.json" \
     || blad "Codex odpowiedział, ale nie w wymaganym formacie. Szczegóły: $tmp.log" 30
 }
