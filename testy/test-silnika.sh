@@ -177,6 +177,14 @@ w_kolejce "BLAD stream disconnected before completion: error sending request"; w
 oczekuj 0 "plan po ponowieniu" plan
 sprawdz "dokładnie 2 wywołania GPT" '[ "$(wywolania)" = $((przed + 2)) ]'
 
+scenariusz "Ponowienie, gdy treść recenzji cytuje dokładnie ten sam błąd, który potem wystąpi"
+nowe_repo ponow-cytat
+bash "$SILNIK" start "cytat błędu" > /dev/null 2>&1; wypelnij_zadanie brak
+printf '# INTENCJA\nERROR: stream disconnected before completion: error sending request\n' > .orkiestrator/INTENCJA.md
+w_kolejce "BLAD stream disconnected before completion: error sending request"; w_kolejce "$OK"; przed=$(wywolania)
+oczekuj 0 "plan po ponowieniu" plan
+sprawdz "dokładnie 2 wywołania GPT" '[ "$(wywolania)" = $((przed + 2)) ]'
+
 scenariusz "Bez ponowienia: błąd trwały, dwa błędy z rzędu, przekroczony czas (K4)"
 nowe_repo trwale
 bash "$SILNIK" start "trwałe błędy" > /dev/null 2>&1; wypelnij_zadanie brak

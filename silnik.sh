@@ -151,11 +151,14 @@ polacz() { if [ -n "$1" ] && [ -n "$2" ]; then printf '%s,%s' "$1" "$2"; else pr
 blad_przejsciowy() {
   # blad_przejsciowy log pakiet -> 0 gdy dziennik Codexa wygląda na chwilową awarię (sieć, przeciążenie),
   # a nie na trwały problem (limit konta, logowanie). Trwałe mają pierwszeństwo.
-  # Codex wypisuje do dziennika cały prompt i przeczytane pliki, więc oceniamy tylko koniec dziennika,
-  # bez linii dosłownie obecnych w prompcie (pakiecie), i tylko linie z komunikatem błędu
-  # ("ERROR: ...", opcjonalnie po znaczniku czasu). Brak takich linii = bez ponowienia.
-  local bledy k='(^|[^0-9a-fA-F-])' p='([^0-9a-fA-F-]|$)'
-  bledy="$(tail -n 40 "$1" | grep -vxF -f "$2" | grep -Ei '^(\[[^]]*\][[:space:]]*)?error:')"
+  # Codex wypisuje do dziennika cały prompt (blok tuż po linii "user", tyle linii, ile ma pakiet)
+  # i przeczytane pliki. Pomijamy dokładnie ten blok, bierzemy koniec reszty dziennika
+  # i tylko linie z komunikatem błędu ("ERROR: ...", opcjonalnie po znaczniku czasu).
+  # Brak takich linii = bez ponowienia.
+  local bledy n k='(^|[^0-9a-fA-F-])' p='([^0-9a-fA-F-]|$)'
+  n="$(awk 'END { print NR }' "$2")"
+  bledy="$(awk -v n="$n" 'pomin > 0 { pomin--; next } !byl && $0 == "user" { pomin = n; byl = 1; next } { print }' "$1" \
+    | tail -n 40 | grep -Ei '^(\[[^]]*\][[:space:]]*)?error:')"
   [ -n "$bledy" ] || return 1
   # Kody HTTP tylko jako osobne liczby, żeby nie łapać fragmentów identyfikatorów sesji (UUID).
   printf '%s\n' "$bledy" | grep -Eqi "usage limit|quota|out of credits|${k}401${p}|unauthori[sz]ed|not logged in|login" && return 1
