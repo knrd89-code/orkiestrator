@@ -169,10 +169,10 @@ sprawdz "wpis o ponowieniu w dzienniku" 'grep -q "chwilowy błąd Codexa (kod 1)
 sprawdz "dziennik pierwszej próby zachowany" '[ -f .orkiestrator/codex-plan-1.log.proba1 ]'
 sprawdz "runda nie zużyta" '[ -f .orkiestrator/werdykt-plan-1.json ] && [ ! -f .orkiestrator/werdykt-plan-2.json ]'
 
-scenariusz "Ponowienie mimo słów „login”, „usage limit” i „401” w treści recenzji"
+scenariusz "Ponowienie mimo zacytowanego w treści recenzji „ERROR: login failed, usage limit, 401”"
 nowe_repo ponow-tresc
 bash "$SILNIK" start "ponowienie z treścią" > /dev/null 2>&1; wypelnij_zadanie brak
-printf '# INTENCJA\nNaprawić login. Komunikat: usage limit, kod 401, quota.\nERROR w opisie zadania, usage limit, nie jest błędem.\n' > .orkiestrator/INTENCJA.md
+printf '# INTENCJA\nNaprawić login. Komunikat: usage limit, kod 401, quota.\nERROR: login failed, usage limit, 401, quota\n' > .orkiestrator/INTENCJA.md
 w_kolejce "BLAD stream disconnected before completion: error sending request"; w_kolejce "$OK"; przed=$(wywolania)
 oczekuj 0 "plan po ponowieniu" plan
 sprawdz "dokładnie 2 wywołania GPT" '[ "$(wywolania)" = $((przed + 2)) ]'
@@ -234,6 +234,8 @@ EOF
 chmod +x "$T/bin-git/git"
 nowe_repo chmura
 git init -q --bare "$T/origin-chmura.git" && git remote add origin "$T/origin-chmura.git" && git push -q origin main
+# Jak klon w chmurze: pobieranie zmapowane tylko dla main.
+git config remote.origin.fetch "+refs/heads/main:refs/remotes/origin/main" && git fetch -q origin
 bash "$SILNIK" start "chmura" > /dev/null 2>&1; wypelnij_zadanie brak; w_kolejce "$OK"
 bash "$SILNIK" plan > /dev/null 2>&1
 echo "nowa treść" > a.txt; w_kolejce "$OK"

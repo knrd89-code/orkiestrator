@@ -149,12 +149,13 @@ obrazy_stron() {
 polacz() { if [ -n "$1" ] && [ -n "$2" ]; then printf '%s,%s' "$1" "$2"; else printf '%s%s' "$1" "$2"; fi; }
 
 blad_przejsciowy() {
-  # blad_przejsciowy log -> 0 gdy dziennik Codexa wygląda na chwilową awarię (sieć, przeciążenie),
+  # blad_przejsciowy log pakiet -> 0 gdy dziennik Codexa wygląda na chwilową awarię (sieć, przeciążenie),
   # a nie na trwały problem (limit konta, logowanie). Trwałe mają pierwszeństwo.
-  # Dziennik zawiera też cały prompt i przeczytane pliki, więc oceniamy WYŁĄCZNIE linie z komunikatem
-  # błędu Codexa ("ERROR: ...", "Error: ...", opcjonalnie po znaczniku czasu). Brak takich linii = bez ponowienia.
+  # Codex wypisuje do dziennika cały prompt i przeczytane pliki, więc oceniamy tylko koniec dziennika,
+  # bez linii dosłownie obecnych w prompcie (pakiecie), i tylko linie z komunikatem błędu
+  # ("ERROR: ...", opcjonalnie po znaczniku czasu). Brak takich linii = bez ponowienia.
   local bledy k='(^|[^0-9a-fA-F-])' p='([^0-9a-fA-F-]|$)'
-  bledy="$(grep -Ei '^(\[[^]]*\][[:space:]]*)?error:' "$1")"
+  bledy="$(tail -n 40 "$1" | grep -vxF -f "$2" | grep -Ei '^(\[[^]]*\][[:space:]]*)?error:')"
   [ -n "$bledy" ] || return 1
   # Kody HTTP tylko jako osobne liczby, żeby nie łapać fragmentów identyfikatorów sesji (UUID).
   printf '%s\n' "$bledy" | grep -Eqi "usage limit|quota|out of credits|${k}401${p}|unauthori[sz]ed|not logged in|login" && return 1
@@ -182,7 +183,7 @@ uruchom_codex() {
     rc=$?
     [ "$rc" -eq 0 ] && [ -s "$wynik" ] && break
     # Jedno ponowienie, tylko przy chwilowej awarii. Przekroczony czas (142) nie jest ponawiany.
-    [ "$proba" -eq 1 ] && [ "$rc" -ne 142 ] && blad_przejsciowy "$log" || break
+    [ "$proba" -eq 1 ] && [ "$rc" -ne 142 ] && blad_przejsciowy "$log" "$pakiet" || break
     mv "$log" "$log.proba1"
     echo "Chwilowy błąd połączenia z GPT (kod $rc). Ponawiam za ${ORK_PONOW_S:-15} s..."
     loguj ""
@@ -243,14 +244,21 @@ zapisz_prace() {
 
 wyslij_galaz() {
   # Wysyła gałąź zadania i pilnuje, żeby lokalna gałąź była powiązana z tą na serwerze.
-  # W chmurze (push przez pośrednika) samo -u potrafiło tego nie zapisać, a hook sesji
-  # zgłaszał wtedy "niewysłane zmiany". Komunikaty gita idą do github.log, nie w nicość.
-  { echo "--- $(teraz) git push $GALAZ"; } >> "$PRACA/github.log"
+  # Chmura klonuje repozytorium z mapowaniem pobierania tylko dla głównej gałęzi
+  # (remote.origin.fetch = main), więc git nie miał gdzie zapisać śledzenia gałęzi zadania,
+  # a hook sesji zgłaszał "niewysłane zmiany". Komunikaty gita idą do github.log, nie w nicość.
+  local mapa="+refs/heads/$GALAZ:refs/remotes/origin/$GALAZ"
+  echo "--- $(teraz) git push $GALAZ" >> "$PRACA/github.log"
   git push -q -u origin "$GALAZ" >> "$PRACA/github.log" 2>&1 || return 1
+  if ! git rev-parse -q --verify "refs/remotes/origin/$GALAZ" >/dev/null; then
+    git config --get-all remote.origin.fetch | grep -qxF "$mapa" || git config --add remote.origin.fetch "$mapa"
+    git fetch -q origin "$GALAZ" >> "$PRACA/github.log" 2>&1
+  fi
   git config "branch.$GALAZ.remote" origin
   git config "branch.$GALAZ.merge" "refs/heads/$GALAZ"
-  git rev-parse -q --verify "refs/remotes/origin/$GALAZ" >/dev/null \
-    || git fetch -q origin "$GALAZ" >> "$PRACA/github.log" 2>&1
+  if [ "$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" != "origin/$GALAZ" ]; then
+    echo "UWAGA: gałąź $GALAZ jest na serwerze, ale nie udało się jej powiązać lokalnie." | tee -a "$PRACA/github.log"
+  fi
   return 0
 }
 
